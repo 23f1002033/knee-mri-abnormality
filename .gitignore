@@ -1,0 +1,13 @@
+*.dcm
+*.npy
+*.npz
+*.zarr/
+*.h5
+*.pt
+*.pth
+*.ckpt
+*.csv
+wandb/
+.env
+kaggle.json
+.DS_Store
