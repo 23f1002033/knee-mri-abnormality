@@ -3,6 +3,19 @@
 Inputs: competition data, series_inventory.csv and study_inventory.csv from notebook 01.
 Outputs: laterality.csv (pilot). The full cache is built in 02b-cache-build.
 
+02b-cache-build
+- Built with src/knee_prep.py at commit b1f7e63, attached on Kaggle as the knee_prep
+  utility script.
+- Rescans all 24371 series (94 s, 0 errors) and redoes selection and laterality with
+  the shared code, so train and test go through the same path.
+- Laterality there reads tags from every series in a study, not only the selected ones.
+  16 studies have series that disagree, so they drop the tag and fall back to geometry:
+  tag 2178, geo 1131, unknown 1098.
+- 20-study test: 0.4 min, no errors, no QA flags.
+- Outputs: cache/*.npz, series_scan.csv, selected_series.csv, laterality.csv,
+  cache_qa.csv, cache_meta.json.
+- Full run results: pending.
+
 Series selection
 - One series per study and plane: readable first, fluid-sensitive first, slice thickness
   closest to 3 mm, then most rows.
