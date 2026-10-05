@@ -47,7 +47,11 @@ Cache build (02b-cache-build)
 - 20-study test: 0.4 min, no errors, no QA flags.
 - Outputs: cache/*.npz, series_scan.csv, selected_series.csv, laterality.csv,
   cache_qa.csv, cache_meta.json.
-- Full run: pending.
+- Full run: 4407 studies in 74.6 min (1.12 s per study with 4 workers), 0 errors,
+  no duplicate positions, gaps or mixed shapes. Header scan took 89 s.
+- Cache size: about 16.8 GB (estimate from the 100-study pilot).
+- cache_meta.json in that run still says git_commit FILL_ME. The run used the knee_prep
+  utility script uploaded from commit b1f7e63.
 
 Known issues
 - Knee size in the frame varies with field of view. Cropping to the body is a possible
@@ -55,4 +59,4 @@ Known issues
 - Depth resampling of 3D series (up to 320 slices) uses linear sampling without
   antialiasing.
 
-Next: laterality classifier for unknown studies, 03-report-labeling.
+Next: 03-report-labeling, laterality classifier for unknown studies.
