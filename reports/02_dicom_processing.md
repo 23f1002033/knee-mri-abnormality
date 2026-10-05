@@ -1,20 +1,8 @@
-## Notebook 02 summary
+## Notebook 02: DICOM processing
 
 Inputs: competition data, series_inventory.csv and study_inventory.csv from notebook 01.
-Outputs: laterality.csv (pilot). The full cache is built in 02b-cache-build.
-
-02b-cache-build
-- Built with src/knee_prep.py at commit b1f7e63, attached on Kaggle as the knee_prep
-  utility script.
-- Rescans all 24371 series (94 s, 0 errors) and redoes selection and laterality with
-  the shared code, so train and test go through the same path.
-- Laterality there reads tags from every series in a study, not only the selected ones.
-  16 studies have series that disagree, so they drop the tag and fall back to geometry:
-  tag 2178, geo 1131, unknown 1098.
-- 20-study test: 0.4 min, no errors, no QA flags.
-- Outputs: cache/*.npz, series_scan.csv, selected_series.csv, laterality.csv,
-  cache_qa.csv, cache_meta.json.
-- Full run results: pending.
+Outputs: laterality.csv (pilot). This notebook is exploration and pilots only. The full cache
+is built by 02b-cache-build with the shared module src/knee_prep.py.
 
 Series selection
 - One series per study and plane: readable first, fluid-sensitive first, slice thickness
@@ -32,13 +20,17 @@ Orientation and slice order
 Laterality
 - Image right is always patient left, so medial is on opposite sides for left and right
   knees. Five labels depend on this (MCL, both menisci, medial and lateral OA).
-- DICOM tag gives the side for 2194 studies, balanced L/R. Tag agrees with the side named
-  in the report for 98% of 806 studies where both exist.
-- Coordinate x of the coronal image center gives the side for Siemens (99%) and Philips
-  (98%), not for GE or others. Used for 1115 untagged studies; 98% agreement with reports
-  on the 99 that name a side.
-- 1098 studies still unknown, mostly GE (868), Toshiba (181), Canon (45).
-  Plan: small classifier on coronal slices (fibula position), trained on known sides.
+- Sources, in order: DICOM tag, then scanner geometry, then unknown.
+- Tags are balanced L/R and agree with the side named in the report for 98% of the 806
+  studies where both exist.
+- Geometry: the x coordinate of the coronal image center gives the side for Siemens (99%)
+  and Philips (98%), not for GE or the others. On untagged studies whose report names a
+  side, geometry agrees 98% (n=99).
+- Final counts (02b): tag 2178, geo 1131, unknown 1098. Notebook 02 had 2194/1115 because
+  it read tags from the selected series only; 16 studies have series that disagree on the
+  side, so they now fall back to geometry.
+- Unknown is mostly GE (868), Toshiba (181), Canon (45). Plan: small classifier on coronal
+  slices (fibula position), trained on studies with a known side.
 - The cache keeps native orientation. Left knees are flipped at load time from
   laterality.csv, so the cache never needs rebuilding when laterality improves.
 
@@ -48,11 +40,19 @@ Preprocessing
 - 100-study pilot: 1.11 s per study with 4 workers (about 1.35 h for train),
   3.82 MB per study (about 16.8 GB for train), no errors.
 
+Cache build (02b-cache-build)
+- src/knee_prep.py at commit b1f7e63, attached on Kaggle as the knee_prep utility script.
+- Rescans all 24371 series (94 s, 0 errors) and redoes selection and laterality, so train
+  and test go through the same code.
+- 20-study test: 0.4 min, no errors, no QA flags.
+- Outputs: cache/*.npz, series_scan.csv, selected_series.csv, laterality.csv,
+  cache_qa.csv, cache_meta.json.
+- Full run: pending.
+
 Known issues
 - Knee size in the frame varies with field of view. Cropping to the body is a possible
   later improvement.
 - Depth resampling of 3D series (up to 320 slices) uses linear sampling without
   antialiasing.
 
-Next: 02b-cache-build (full train cache), laterality classifier for unknown studies,
-03-report-labeling.
+Next: laterality classifier for unknown studies, 03-report-labeling.
