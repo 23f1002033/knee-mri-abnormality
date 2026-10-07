@@ -146,13 +146,18 @@ def train_fold(cfg):
     scaler = torch.amp.GradScaler("cuda")
 
     run = None
-    if os.environ.get("WANDB_API_KEY"):
+    key = os.environ.get("WANDB_API_KEY")
+    if key:
         try:
             import wandb
+            wandb.login(key=key, relogin=True)
             run = wandb.init(project=cfg["wandb_project"], group=cfg["exp"], name=f"{cfg['exp']}-f{fold}",
-                             config=cfg, reinit=True)
+                             job_type="train", config=cfg)
+            print("wandb run:", run.url, flush=True)
         except Exception as err:
-            print("wandb off:", repr(err)[:200], flush=True)
+            print("wandb off:", repr(err)[:300], flush=True)
+    else:
+        print("wandb off: no WANDB_API_KEY in this process", flush=True)
 
     print(f"fold {fold}: train {len(tr)}, val {len(va)}, steps/epoch {len(dl_tr)}", flush=True)
     best, history = -1.0, []
@@ -201,6 +206,47 @@ def train_fold(cfg):
         run.summary["best_val_silver_macro"] = best
         run.finish()
     print(f"fold {fold} done, best silver macro {best:.4f}", flush=True)
+
+
+LAT_FRACS = (0.5, 0.65, 0.8)
+
+
+def lat_input(vols):
+    v = vols.get("cor") if vols else None
+    if v is None or v.shape != (DEPTH, SIZE, SIZE):
+        return None
+    return v[[int(round(f * (DEPTH - 1))) for f in LAT_FRACS]]
+
+
+def make_lat_net(pretrained=False):
+    import timm
+    return timm.create_model("resnet18", pretrained=pretrained, num_classes=1, in_chans=3)
+
+
+def lat_norm(x):
+    mean = torch.tensor([0.485, 0.456, 0.406], device=x.device).view(1, 3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225], device=x.device).view(1, 3, 1, 1)
+    return (x - mean) / std
+
+
+@torch.no_grad()
+def lat_predict(model, arr, device="cuda"):
+    x = torch.from_numpy(np.ascontiguousarray(arr)).to(device).float() / 255.0
+    o = (SIZE - CROP) // 2
+    x = x[:, :, o:o + CROP, o:o + CROP]
+    with torch.autocast("cuda", dtype=torch.float16, enabled=device.startswith("cuda")):
+        p1 = torch.sigmoid(model(lat_norm(x)).float().squeeze(1))
+        p2 = torch.sigmoid(model(lat_norm(x.flip(-1))).float().squeeze(1))
+    return ((p1 + 1 - p2) / 2).cpu().numpy()
+
+
+def to_canonical(vols, side):
+    if side != "L":
+        return vols
+    out = {}
+    for k, v in vols.items():
+        out[k] = v[::-1].copy() if k == "sag" else v[:, :, ::-1].copy()
+    return out
 
 
 def load_models(paths, device="cuda"):
