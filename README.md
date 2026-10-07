@@ -12,24 +12,34 @@ available at test time.
 ## Layout
 
     notebooks/   Kaggle notebooks, one job each, outputs cleared before commit
-    src/         code shared between notebooks (also uploaded to Kaggle as a utility script)
+    src/         code shared between notebooks (mirrored on Kaggle as utility scripts)
     reports/     short write-up of what each notebook found
 
 ## Notebooks
 
 | Notebook | What it does | Status |
 | --- | --- | --- |
+| 00-dicom-decoders | offline wheels for JPEG and JPEG 2000 DICOM decoding | done |
 | 01-data-exploration | inventory of CSVs, series, DICOM headers, reports, leakage risks | done |
 | 02-dicom-processing | series selection, slice ordering, laterality, preprocessing pilot | done |
-| 02b-cache-build | full train image cache using src/knee_prep.py | in progress |
-| 03-report-labeling | silver labels from reports, checked against the 58 gold studies | planned |
+| 02b-cache-build | full train image cache using src/knee_prep.py | done |
+| 03-report-labeling | LLM labeler design and dev evaluation | done |
+| 03b-label-shard0/1 | full labeling run, split over two accounts | done |
+| 04-silver-labels | merge shards, final scoring, one-time holdout check | in progress |
+| 05-baseline | first image model | planned |
+
+## Tracking
+
+- Kaggle notebook versions hold all outputs and pass artifacts between notebooks.
+- Weights & Biases logs metrics and configs only. No competition data, reports or labels
+  are uploaded there.
+- Hugging Face is for a final selected checkpoint, if the competition rules allow it.
 
 ## Running
 
 Everything runs on Kaggle. Notebooks read the competition data from
 `/kaggle/input/competitions/rsna-knee-abnormality-detection` and pass results to each
-other as Kaggle notebook outputs. `src/knee_prep.py` is kept in sync with a Kaggle utility
-script of the same name, which later notebooks attach and import.
+other as Kaggle notebook outputs.
 
 ## Data
 
