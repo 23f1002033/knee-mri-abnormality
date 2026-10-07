@@ -26,7 +26,9 @@ available at test time.
 | 03-report-labeling | LLM labeler design and dev evaluation | done |
 | 03b-label-shard0/1 | full labeling run, split over two accounts | done |
 | 04-silver-labels | merge shards, final scoring, one-time holdout check | in progress |
-| 05-baseline | first image model | planned |
+| 05a-train | baseline image model: EfficientNet-B0, 2.5D, 5 site-grouped folds | done |
+| 05b-infer | offline inference and submission, public LB 0.908 | done |
+| 05c-laterality | side classifier for the laterality flip experiment | in progress |
 
 ## Tracking
 
