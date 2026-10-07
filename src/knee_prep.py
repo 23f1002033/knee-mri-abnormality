@@ -1,5 +1,6 @@
 import os
 import shutil
+import time
 import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from functools import partial
@@ -68,12 +69,16 @@ def scan_all(series_df, root, split, workers=16):
     return series_df.merge(pd.DataFrame(info), on="SeriesInstanceUID", how="left")
 
 
-def select_series(inv):
+def rank_series(inv):
     return (inv.assign(ok=inv["error"].isna(), thick_gap=(inv["thick_mm"] - 3).abs())
                .sort_values(["ok", "Fluid_Sensitive", "thick_gap", "rows"],
                             ascending=[False, False, True, False])
+               .drop(columns=["ok", "thick_gap"]))
+
+
+def select_series(inv):
+    return (rank_series(inv)
                .drop_duplicates(["StudyInstanceUID", "Anatomical_Plane"])
-               .drop(columns=["ok", "thick_gap"])
                .sort_values(["StudyInstanceUID", "Anatomical_Plane"])
                .reset_index(drop=True))
 
@@ -179,3 +184,39 @@ def build_cache(sel, root, split, out_dir, workers=4, min_free_gb=1.0):
     with ProcessPoolExecutor(workers, mp_context=mp.get_context("fork"), initializer=_init_worker) as ex:
         res = list(tqdm(ex.map(fn, groups, chunksize=4), total=len(groups), mininterval=60))
     return pd.DataFrame([q for qs in res for q in qs])
+
+
+def load_study(inv_study, root, split):
+    vols, notes = {}, []
+    for plane, cands in rank_series(inv_study).groupby("Anatomical_Plane", sort=False):
+        key = PLANE_KEYS.get(plane)
+        if key is None:
+            continue
+        for r in cands.itertuples(index=False):
+            d = os.path.join(root, split, r.StudyInstanceUID, r.SeriesInstanceUID)
+            try:
+                vol, _ = load_volume(d)
+                if vol is None:
+                    raise ValueError("mixed slice shapes")
+                vols[key] = resample(normalize(vol))
+                break
+            except Exception as err:
+                notes.append(f"{key} {r.SeriesInstanceUID[-6:]}: {type(err).__name__}")
+    return vols, notes
+
+
+def _study_one(item, root, split):
+    sid, inv_study = item
+    t0 = time.time()
+    try:
+        vols, notes = load_study(inv_study, root, split)
+    except Exception as err:
+        vols, notes = {}, [f"study: {type(err).__name__}"]
+    return sid, vols, notes, time.time() - t0
+
+
+def iter_studies(inv, root, split, workers=4):
+    groups = list(inv.groupby("StudyInstanceUID"))
+    fn = partial(_study_one, root=root, split=split)
+    with ProcessPoolExecutor(workers, mp_context=mp.get_context("fork"), initializer=_init_worker) as ex:
+        yield from ex.map(fn, groups, chunksize=2)
