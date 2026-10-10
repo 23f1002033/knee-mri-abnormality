@@ -13,6 +13,7 @@ import torch.nn.functional as F
 from tqdm.auto import tqdm
 
 D, S = 32, 256
+MM_FOV = 140.0
 VENDORS = ["siemens", "ge", "philips", "toshiba", "canon", "hitachi"]
 GEO_VENDORS = {"siemens", "philips"}
 PLANE_KEYS = {"Sagittal": "sag", "Coronal": "cor", "Axial": "axi"}
@@ -118,6 +119,8 @@ def load_volume(series_dir):
     qa["spacing"] = round(med, 3)
     qa["dup_pos"] = int((gaps < 1e-3).sum())
     qa["big_gaps"] = int((gaps > 1.5 * med).sum()) if med > 0 else 0
+    ps = dss[order[0]].get("PixelSpacing")
+    qa["px"] = (float(ps[0]), float(ps[1])) if ps is not None else None
     arrs = [dss[i].pixel_array.astype(np.float32) for i in order]
     qa["mixed_shapes"] = len({a.shape for a in arrs}) > 1
     return (None if qa["mixed_shapes"] else np.stack(arrs)), qa
@@ -145,7 +148,51 @@ def resample(vol):
     return (t[0].T.reshape(D, S, S).clamp(0, 1) * 255).round().to(torch.uint8).numpy()
 
 
-def process_study(rows, root, split):
+def leg_mask(img, thr=0.1):
+    from scipy import ndimage
+    m = img > thr
+    lab, n = ndimage.label(m)
+    if n > 1:
+        sizes = ndimage.sum(m, lab, range(1, n + 1))
+        m = lab == int(np.argmax(sizes)) + 1
+    return m
+
+
+def knee_crop(vol, size, thr=0.1):
+    d, h, w = vol.shape
+    ys, xs = np.nonzero(leg_mask(vol.mean(0), thr))
+    if len(ys) > 100:
+        cy, cx = int(ys.mean()), int(xs.mean())
+    else:
+        cy, cx = h // 2, w // 2
+    out = np.zeros((d, size, size), vol.dtype)
+    y0, x0 = cy - size // 2, cx - size // 2
+    sy0, sx0 = max(y0, 0), max(x0, 0)
+    sy1, sx1 = min(y0 + size, h), min(x0 + size, w)
+    out[:, sy0 - y0:sy1 - y0, sx0 - x0:sx1 - x0] = vol[:, sy0:sy1, sx0:sx1]
+    return out, (cy, cx)
+
+
+def resample_mm(vol, px):
+    t_mm = MM_FOV / S
+    d, h, w = vol.shape
+    nh = max(1, int(round(h * px[0] / t_mm)))
+    nw = max(1, int(round(w * px[1] / t_mm)))
+    t = torch.from_numpy(np.ascontiguousarray(vol, dtype=np.float32))[:, None]
+    t = F.interpolate(t, size=(nh, nw), mode="bilinear", antialias=True, align_corners=False)[:, 0].numpy()
+    crop, _ = knee_crop(t, S)
+    t = torch.from_numpy(crop).reshape(d, S * S).T[None]
+    t = F.interpolate(t, size=D, mode="linear", align_corners=False)
+    return (t[0].T.reshape(D, S, S).clamp(0, 1) * 255).round().to(torch.uint8).numpy()
+
+
+def make_volume(vol, qa, geometry="px"):
+    if geometry == "mm" and qa.get("px"):
+        return resample_mm(normalize(vol), qa["px"])
+    return resample(normalize(vol))
+
+
+def process_study(rows, root, split, geometry="px"):
     vols, qas = {}, []
     for r in rows.itertuples(index=False):
         d = os.path.join(root, split, r.StudyInstanceUID, r.SeriesInstanceUID)
@@ -153,7 +200,7 @@ def process_study(rows, root, split):
         key = PLANE_KEYS[r.Anatomical_Plane]
         qa.update(StudyInstanceUID=r.StudyInstanceUID, plane=key)
         if vol is not None:
-            vols[key] = resample(normalize(vol))
+            vols[key] = make_volume(vol, qa, geometry)
         qas.append(qa)
     return vols, qas
 
@@ -162,7 +209,7 @@ def _init_worker():
     torch.set_num_threads(1)
 
 
-def _cache_one(item, root, split, out_dir, min_free_gb):
+def _cache_one(item, root, split, out_dir, min_free_gb, geometry="px"):
     sid, rows = item
     path = os.path.join(out_dir, f"{sid}.npz")
     if os.path.exists(path):
@@ -170,23 +217,24 @@ def _cache_one(item, root, split, out_dir, min_free_gb):
     if shutil.disk_usage(out_dir).free < min_free_gb * 1e9:
         return [{"StudyInstanceUID": sid, "error": "low disk"}]
     try:
-        vols, qas = process_study(rows, root, split)
+        vols, qas = process_study(rows, root, split, geometry)
         np.savez_compressed(path, **vols)
         return [{**q, "error": None} for q in qas]
     except Exception as err:
         return [{"StudyInstanceUID": sid, "error": repr(err)[:200]}]
 
 
-def build_cache(sel, root, split, out_dir, workers=4, min_free_gb=1.0):
+def build_cache(sel, root, split, out_dir, workers=4, min_free_gb=1.0, geometry="px"):
     os.makedirs(out_dir, exist_ok=True)
     groups = list(sel.groupby("StudyInstanceUID"))
-    fn = partial(_cache_one, root=root, split=split, out_dir=out_dir, min_free_gb=min_free_gb)
+    fn = partial(_cache_one, root=root, split=split, out_dir=out_dir, min_free_gb=min_free_gb,
+                 geometry=geometry)
     with ProcessPoolExecutor(workers, mp_context=mp.get_context("fork"), initializer=_init_worker) as ex:
         res = list(tqdm(ex.map(fn, groups, chunksize=4), total=len(groups), mininterval=60))
     return pd.DataFrame([q for qs in res for q in qs])
 
 
-def load_study(inv_study, root, split):
+def load_study(inv_study, root, split, geometry="px"):
     vols, notes = {}, []
     for plane, cands in rank_series(inv_study).groupby("Anatomical_Plane", sort=False):
         key = PLANE_KEYS.get(plane)
@@ -195,28 +243,28 @@ def load_study(inv_study, root, split):
         for r in cands.itertuples(index=False):
             d = os.path.join(root, split, r.StudyInstanceUID, r.SeriesInstanceUID)
             try:
-                vol, _ = load_volume(d)
+                vol, qa = load_volume(d)
                 if vol is None:
                     raise ValueError("mixed slice shapes")
-                vols[key] = resample(normalize(vol))
+                vols[key] = make_volume(vol, qa, geometry)
                 break
             except Exception as err:
                 notes.append(f"{key} {r.SeriesInstanceUID[-6:]}: {type(err).__name__}")
     return vols, notes
 
 
-def _study_one(item, root, split):
+def _study_one(item, root, split, geometry="px"):
     sid, inv_study = item
     t0 = time.time()
     try:
-        vols, notes = load_study(inv_study, root, split)
+        vols, notes = load_study(inv_study, root, split, geometry)
     except Exception as err:
         vols, notes = {}, [f"study: {type(err).__name__}"]
     return sid, vols, notes, time.time() - t0
 
 
-def iter_studies(inv, root, split, workers=4):
+def iter_studies(inv, root, split, workers=4, geometry="px"):
     groups = list(inv.groupby("StudyInstanceUID"))
-    fn = partial(_study_one, root=root, split=split)
+    fn = partial(_study_one, root=root, split=split, geometry=geometry)
     with ProcessPoolExecutor(workers, mp_context=mp.get_context("fork"), initializer=_init_worker) as ex:
         yield from ex.map(fn, groups, chunksize=2)
