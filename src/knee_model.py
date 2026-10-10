@@ -57,10 +57,22 @@ def prepare(vols, train=False, rng=None):
     return x, mask
 
 
+def cache_index(dirs):
+    dirs = [dirs] if isinstance(dirs, str) else list(dirs)
+    index = {}
+    for d in dirs:
+        for e in os.scandir(d):
+            if e.name.endswith(".npz"):
+                index[e.name[:-4]] = e.path
+    return index
+
+
 class KneeDataset(Dataset):
-    def __init__(self, ids, cache_dir, targets=None, train=False):
-        self.ids, self.cache_dir = list(ids), cache_dir
+    def __init__(self, ids, cache, targets=None, train=False, sides=None):
+        self.ids = list(ids)
+        self.index = cache if isinstance(cache, dict) else cache_index(cache)
         self.targets, self.train = targets, train
+        self.sides = None if sides is None else list(sides)
 
     def __len__(self):
         return len(self.ids)
@@ -68,10 +80,12 @@ class KneeDataset(Dataset):
     def __getitem__(self, i):
         vols = {}
         try:
-            with np.load(os.path.join(self.cache_dir, f"{self.ids[i]}.npz")) as z:
+            with np.load(self.index[self.ids[i]]) as z:
                 vols = {k: z[k] for k in z.files}
         except Exception:
             pass
+        if self.sides is not None:
+            vols = to_canonical(vols, self.sides[i])
         x, mask = prepare(vols, self.train, np.random.default_rng() if self.train else None)
         out = {"x": torch.from_numpy(x), "mask": torch.from_numpy(mask)}
         if self.targets is not None:
@@ -132,10 +146,19 @@ def train_fold(cfg):
 
     df = pd.read_csv(cfg["folds_csv"]).merge(pd.read_csv(cfg["labels_csv"]), on="StudyInstanceUID")
     tr, va = df[df["fold"] != fold].reset_index(drop=True), df[df["fold"] == fold].reset_index(drop=True)
+    index = cache_index(cfg["cache_dir"])
+    missing = [s for s in df["StudyInstanceUID"] if s not in index]
+    print(f"cache index: {len(index)} studies, {len(missing)} labelled studies missing", flush=True)
+    tr_sides = va_sides = None
+    if cfg.get("flip"):
+        side = pd.read_csv(cfg["lat_csv"]).set_index("StudyInstanceUID")["side_final"]
+        tr_sides = tr["StudyInstanceUID"].map(side).tolist()
+        va_sides = va["StudyInstanceUID"].map(side).tolist()
+        print(f"flip on: {sum(s == 'L' for s in tr_sides)} of {len(tr_sides)} train studies are left knees", flush=True)
     kw = dict(num_workers=cfg["workers"], pin_memory=True, persistent_workers=True)
-    dl_tr = DataLoader(KneeDataset(tr["StudyInstanceUID"], cfg["cache_dir"], to_targets(tr), train=True),
+    dl_tr = DataLoader(KneeDataset(tr["StudyInstanceUID"], index, to_targets(tr), train=True, sides=tr_sides),
                        batch_size=cfg["bs"], shuffle=True, drop_last=True, **kw)
-    dl_va = DataLoader(KneeDataset(va["StudyInstanceUID"], cfg["cache_dir"]),
+    dl_va = DataLoader(KneeDataset(va["StudyInstanceUID"], index, sides=va_sides),
                        batch_size=cfg["bs"], shuffle=False, **kw)
 
     model = KneeNet(cfg["backbone"], pretrained=True, drop=cfg["drop"]).cuda()
@@ -255,15 +278,21 @@ def load_models(paths, device="cuda"):
         ck = torch.load(p, map_location="cpu")
         m = KneeNet(ck["cfg"]["backbone"], pretrained=False, drop=ck["cfg"]["drop"])
         m.load_state_dict(ck["state_dict"])
+        m.flip = bool(ck["cfg"].get("flip", False))
+        m.geometry = ck["cfg"].get("geometry", "px")
         models.append(m.to(device).eval())
     return models
 
 
 @torch.no_grad()
-def predict_study(models, vols, device="cuda"):
-    x, mask = prepare(vols, train=False)
-    x = torch.from_numpy(x)[None].to(device)
-    mask = torch.from_numpy(mask)[None].to(device)
-    with torch.autocast("cuda", dtype=torch.float16, enabled=device.startswith("cuda")):
-        p = torch.stack([torch.sigmoid(m(x, mask).float()) for m in models]).mean(0)
-    return p[0].cpu().numpy()
+def predict_study(models, vols, device="cuda", side=None):
+    inputs, preds = {}, []
+    for m in models:
+        flip = bool(getattr(m, "flip", False)) and side == "L"
+        if flip not in inputs:
+            x, mask = prepare(to_canonical(vols, side) if flip else vols, train=False)
+            inputs[flip] = (torch.from_numpy(x)[None].to(device), torch.from_numpy(mask)[None].to(device))
+        x, mask = inputs[flip]
+        with torch.autocast("cuda", dtype=torch.float16, enabled=device.startswith("cuda")):
+            preds.append(torch.sigmoid(m(x, mask).float()))
+    return torch.stack(preds).mean(0)[0].cpu().numpy()
