@@ -54,6 +54,11 @@ Cache build (02b-cache-build)
   utility script uploaded from commit b1f7e63.
 
 Known issues
+- All 24371 train series are Explicit VR Little Endian, but the host says test also has
+  JPEG Lossless, JPEG 2000 and Implicit VR. The Kaggle image has no JPEG decoders, so
+  00-dicom-decoders saves pylibjpeg and gdcm wheels for an offline install. Verified with
+  internet off on pydicom sample files: all listed formats decode; JPEG Extended fails
+  but is not listed by the host.
 - Knee size in the frame varies with field of view. Cropping to the body is a possible
   later improvement.
 - Depth resampling of 3D series (up to 320 slices) uses linear sampling without
