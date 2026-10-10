@@ -22,13 +22,20 @@ available at test time.
 | 00-dicom-decoders | offline wheels for JPEG and JPEG 2000 DICOM decoding | done |
 | 01-data-exploration | inventory of CSVs, series, DICOM headers, reports, leakage risks | done |
 | 02-dicom-processing | series selection, slice ordering, laterality, preprocessing pilot | done |
-| 02b-cache-build | full train image cache using src/knee_prep.py | done |
+| 02b-cache-build | full train image cache (px geometry) using src/knee_prep.py | done |
+| 02c-cache-mm-pilot | physical-scale (mm) cache pilot and coverage check | done |
+| 02d-cache-mm-shard0/1 | full mm cache, built in two shards | done |
 | 03-report-labeling | LLM labeler design and dev evaluation | done |
 | 03b-label-shard0/1 | full labeling run, split over two accounts | done |
-| 04-silver-labels | merge shards, final scoring, one-time holdout check | in progress |
-| 05a-train | baseline image model: EfficientNet-B0, 2.5D, 5 site-grouped folds | done |
-| 05b-infer | offline inference and submission, public LB 0.908 | done |
-| 05c-laterality | side classifier for the laterality flip experiment | in progress |
+| 04-silver-labels | merge shards, final scoring, one-time holdout check (macro 0.884) | done |
+| 05a-train | baseline image model: EfficientNet-B0, 2.5D, 5 site-grouped folds | done, LB 0.908 |
+| 05a-train-v2 | baseline on v2 labels (synovitis tie-breaking) | done, LB 0.905 |
+| 05a-train-flip | baseline with laterality flip | done, LB 0.910 |
+| 05a-train-mm | baseline on the mm cache | done, LB 0.914 |
+| 05b-infer | offline inference and submission (flip and mm aware) | done |
+| 05c-laterality | side classifier for unknown studies, 99.3% out-of-fold | done |
+
+Results of each experiment are in reports/06_experiments.md.
 
 ## Tracking
 
