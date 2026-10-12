@@ -32,8 +32,12 @@ available at test time.
 | 05a-train-v2 | baseline on v2 labels (synovitis tie-breaking) | done, LB 0.905 |
 | 05a-train-flip | baseline with laterality flip | done, LB 0.910 |
 | 05a-train-mm | baseline on the mm cache | done, LB 0.914 |
-| 05b-infer | offline inference and submission (flip and mm aware) | done |
+| 05a-train-mm-flip | mm cache + laterality flip | done, LB 0.917 |
+| 05a-train-mm-flip-b2 | same with EfficientNet-B2 | done, ensemble member |
+| 05b-infer | offline inference and submission, ensembles the runs listed in RUNS | done, B0 + B2 LB 0.919 |
 | 05c-laterality | side classifier for unknown studies, 99.3% out-of-fold | done |
+| 05c-laterality-mm | same classifier on mm coronal slices, used at inference for mm models | done |
+| 05d-oof-ensemble | out-of-fold check of averaging two runs before spending a submission | done |
 
 Results of each experiment are in reports/06_experiments.md.
 
